@@ -9,6 +9,9 @@
     "dist:win10": "electron-builder --win --config build-config/win10.js",
     "dist": "npm run dist:win7 && npm run dist:win10"
   },
+  "dependencies": {
+    "electron-updater": "6.3.9"
+  },
   "devDependencies": {
     "electron": "22.3.27",
     "electron-builder": "24.13.3"

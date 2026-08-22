@@ -312,6 +312,22 @@
         </div>
       </div>
 
+      <div class="section-title">Обновление приложения</div>
+      <label class="option">
+        <div class="opt-text"><div class="t">Обновлять автоматически</div><div class="d">Новая версия скачается сама и установится при следующем выходе из приложения. Работу это не прерывает.</div></div>
+        <span class="pp-switch"><input type="checkbox" id="ppAutoUpdate"><span class="pp-switch-track"></span></span>
+      </label>
+      <div class="theme-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <div class="info">
+          <div class="t">Состояние</div>
+          <div class="d" id="ppUpdateStatus">Проверка не выполнялась</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="icon-btn" id="ppCheckUpdateBtn">Проверить сейчас</button>
+          <button class="icon-btn" id="ppInstallUpdateBtn" style="display:none;">Перезапустить и обновить</button>
+        </div>
+      </div>
+
       <div class="pp-about" id="ppAbout"></div>
       <button id="ppLogoutBtn">Выйти из аккаунта</button>
     </div>
@@ -517,6 +533,44 @@ desktop.getAppInfo().then(({ version, track, electron }) => {
   const label = BUILD_TRACK_LABEL[track] || track;
   document.getElementById('ppAbout').textContent = `Искра ${version} · ${label} · Electron ${electron}`;
 }).catch(() => { /* не критично: без этой строки всё остальное работает */ });
+
+// ---------- Обновление приложения ----------
+// Состояние считает главный процесс (см. setupUpdater в main.js), здесь только показ. Кнопка
+// "Перезапустить и обновить" появляется, лишь когда обновление реально скачано и готово ставиться.
+let lastUpdateState = { state: 'idle' };
+function paintUpdateState(s) {
+  lastUpdateState = s || { state: 'idle' };
+  const text = document.getElementById('ppUpdateStatus');
+  const installBtn = document.getElementById('ppInstallUpdateBtn');
+  const checkBtn = document.getElementById('ppCheckUpdateBtn');
+  const byState = {
+    idle: () => 'Проверка не выполнялась',
+    dev: () => 'Запуск из исходников — обновления не проверяются',
+    checking: () => 'Проверяем наличие обновлений…',
+    'not-available': () => 'Установлена последняя версия',
+    available: () => `Доступна версия ${s.version}. Нажмите «Проверить сейчас», чтобы скачать.`,
+    downloading: () => (s.percent != null ? `Загрузка обновления — ${s.percent}%` : 'Загрузка обновления…'),
+    downloaded: () => `Версия ${s.version} загружена. Установится при выходе из приложения — или перезапустите сейчас.`,
+    error: () => `Не удалось проверить обновления: ${s.message || 'сервер недоступен'}`,
+  };
+  text.textContent = (byState[s.state] || byState.idle)();
+  installBtn.style.display = s.state === 'downloaded' ? '' : 'none';
+  checkBtn.disabled = s.state === 'checking' || s.state === 'downloading';
+}
+desktop.getUpdateState().then(paintUpdateState).catch(() => {});
+desktop.onUpdateState(paintUpdateState);
+document.getElementById('ppCheckUpdateBtn').onclick = () => {
+  // Та же кнопка запускает и загрузку, если обновление уже найдено, но автозагрузка выключена —
+  // иначе для скачивания вручную понадобилась бы вторая кнопка ровно с тем же смыслом.
+  if (lastUpdateState.state === 'available') desktop.downloadUpdate();
+  else desktop.checkUpdates();
+};
+document.getElementById('ppInstallUpdateBtn').onclick = async () => {
+  const ok = await uiConfirm('Приложение закроется и обновится. Несохранённых данных в мессенджере нет, но открытые окна чатов закроются.', {
+    title: 'Перезапустить и обновить', okText: 'Перезапустить',
+  });
+  if (ok) desktop.installUpdate();
+};
 document.getElementById('historyRow').onclick = () => desktop.openBroadcast({ token, serverUrl, me: JSON.stringify(me) });
 
 // ---------- Профиль и настройки — панель под me-bar (не отдельное окно) ----------
@@ -530,6 +584,7 @@ const PP_CHECKBOX_IDS = [
   ['ppRememberWindowSize', 'rememberWindowSize'],
   ['ppAlwaysOnTop', 'alwaysOnTop'],
   ['ppHideNames', 'hideNameInMessages'],
+  ['ppAutoUpdate', 'autoUpdate'],
 ];
 
 function paintProfileTheme(theme) {

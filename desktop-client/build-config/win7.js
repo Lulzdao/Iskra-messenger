@@ -10,11 +10,16 @@
 // проверки версии ОС при установке здесь намеренно нет (в отличие от win10.js).
 
 const base = require('./base');
+const feedUrl = require('./feed');
 
 module.exports = {
   ...base,
   electronVersion: '22.3.27',
   directories: { output: 'dist/win7' },
+  // Свой адрес обновлений у каждой сборки — иначе клиент на Windows 7 рано или поздно скачает
+  // сборку с Electron, который на нём не запускается. Наличие publish обязательно и по другой
+  // причине: без него electron-builder не создаёт latest.yml, а без latest.yml проверять нечего.
+  publish: [{ provider: 'generic', url: feedUrl('win7') }],
   // Метка попадает в package.json внутри собранного приложения — по ней клиент показывает в
   // настройках, какая именно сборка установлена (см. get-app-info в main.js). Нужна поддержке:
   // достаточно спросить у человека строку внизу панели настроек, а не выяснять версию Windows.

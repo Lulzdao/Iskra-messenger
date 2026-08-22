@@ -25,6 +25,12 @@ contextBridge.exposeInMainWorld('desktop', {
   onToast: (cb) => ipcRenderer.on('toast', (event, payload) => cb(payload)),
   pickDownloadFolder: () => ipcRenderer.invoke('pick-download-folder'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  // Обновление приложения — см. setupUpdater в main.js.
+  getUpdateState: () => ipcRenderer.invoke('get-update-state'),
+  onUpdateState: (cb) => ipcRenderer.on('update-state', (event, state) => cb(state)),
+  checkUpdates: () => ipcRenderer.send('check-updates'),
+  downloadUpdate: () => ipcRenderer.send('download-update'),
+  installUpdate: () => ipcRenderer.send('install-update'),
   getUnreadState: () => ipcRenderer.invoke('get-unread-state'),
   seedUnread: (payload) => ipcRenderer.invoke('seed-unread', payload),
   onUnreadState: (cb) => ipcRenderer.on('unread-state', (event, state) => cb(state)),

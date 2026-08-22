@@ -479,6 +479,19 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- Файлы обновлений клиента ----------
+// Клиент сам проверяет наличие новой версии и качает её отсюда (см. electron-updater в main.js
+// десктоп-клиента). Отдельный сервер под это не нужен — у нас уже есть доступ ко всем машинам.
+// Внутри — по папке на каждую сборку: updates/win7/ и updates/win10/. Раскладывать их обязательно
+// раздельно: сборка для Windows 10 несёт Electron, который на Windows 7 просто не запускается,
+// и клиент, скачавший чужое обновление, перестанет открываться.
+// В каждой папке лежит то, что положил electron-builder: сам .exe и latest.yml с версией и
+// контрольной суммой. Namespace без авторизации намеренно — это установочные файлы, не секрет,
+// а клиенту на этапе обновления может быть уже нечем предъявить токен.
+const updatesDir = path.join(__dirname, 'updates');
+if (!fs.existsSync(updatesDir)) fs.mkdirSync(updatesDir, { recursive: true });
+app.use('/updates', express.static(updatesDir));
+
 // Разрешаем запросы от десктоп-клиента (Electron грузит страницы с file://)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');

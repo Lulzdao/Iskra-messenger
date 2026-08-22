@@ -10,11 +10,14 @@
 // (Chromium + Node), и проверить это чем-то, кроме запуска, нельзя.
 
 const base = require('./base');
+const feedUrl = require('./feed');
 
 module.exports = {
   ...base,
   electronVersion: '43.4.1',
   directories: { output: 'dist/win10' },
+  // Свой адрес обновлений — см. комментарий в win7.js.
+  publish: [{ provider: 'generic', url: feedUrl('win10') }],
   extraMetadata: { buildTrack: 'win10' },
   artifactName: 'iskra-setup-win10-${arch}-${version}.${ext}',
   nsis: {
