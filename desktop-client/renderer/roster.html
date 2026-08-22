@@ -170,6 +170,9 @@
   #profilePanel.open { opacity: 1; transform: translateY(0); pointer-events: auto; border-top-color: var(--accent); }
   #profilePanel .inner { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #profilePanel .section-title { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }
+  /* Версия и трек сборки — мелким шрифтом над кнопкой выхода. Нужно не пользователю, а поддержке:
+     "продиктуйте нижнюю строку в настройках" вместо выяснения, что за версия у человека стоит. */
+  #profilePanel .pp-about { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 10px; user-select: text; }
   #profilePanel .theme-row + .section-title { margin-top: 10px; }
   #profilePanel .theme-row { display: flex; gap: 8px; padding: 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
   #profilePanel .theme-row .info { flex: 1; }
@@ -309,6 +312,7 @@
         </div>
       </div>
 
+      <div class="pp-about" id="ppAbout"></div>
       <button id="ppLogoutBtn">Выйти из аккаунта</button>
     </div>
   </div>
@@ -502,6 +506,17 @@ desktop.onShowAlert(({ message, title }) => uiAlert(message, title));
 
 document.getElementById('historyRowIcon').innerHTML = uiIcon('megaphone');
 document.querySelector('#capsHint span').innerHTML = uiIcon('capsLock');
+
+// Версия и трек сборки внизу панели настроек — см. get-app-info в main.js.
+const BUILD_TRACK_LABEL = {
+  win7: 'сборка для Windows 7 и 8.1',
+  win10: 'сборка для Windows 10 и новее',
+  dev: 'запуск из исходников',
+};
+desktop.getAppInfo().then(({ version, track, electron }) => {
+  const label = BUILD_TRACK_LABEL[track] || track;
+  document.getElementById('ppAbout').textContent = `Искра ${version} · ${label} · Electron ${electron}`;
+}).catch(() => { /* не критично: без этой строки всё остальное работает */ });
 document.getElementById('historyRow').onclick = () => desktop.openBroadcast({ token, serverUrl, me: JSON.stringify(me) });
 
 // ---------- Профиль и настройки — панель под me-bar (не отдельное окно) ----------

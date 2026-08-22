@@ -10,6 +10,13 @@ const { SERVER_URL } = require('./config');
 // стандартный логотип Electron вместо своего.
 const APP_ICON_PATH = path.join(__dirname, 'build', 'icon.ico');
 
+// Какой сборкой пользуется человек — под Windows 7/8.1 или под Windows 10+. Метку проставляет
+// electron-builder на этапе сборки (extraMetadata в build-config/win7.js и win10.js), поэтому в
+// собранном приложении она есть всегда, а при запуске из исходников (npm start) её нет — тогда
+// 'dev'. Нужна поддержке: обе сборки внешне одинаковы, и без этой строки узнать, какая именно
+// стоит у сотрудника, можно только по версии Electron в диспетчере задач.
+const BUILD_TRACK = require('./package.json').buildTrack || 'dev';
+
 // GPU/аппаратное ускорение Chromium на Windows 7 нестабильно (устаревшие/неполные драйверы DirectX,
 // не рассчитанные на современный Chromium) и регулярно приводит к падениям с "unknown software
 // exception (0x80000003)" — особенно на выключении/перезагрузке ПК, когда драйвер экрана начинает
@@ -548,6 +555,12 @@ ipcMain.handle('set-server-url', (event, url) => {
   saveSettings();
   return settings.serverUrlOverride || SERVER_URL;
 });
+// Строка "что именно у меня установлено" для панели настроек — см. BUILD_TRACK выше.
+ipcMain.handle('get-app-info', () => ({
+  version: app.getVersion(),
+  track: BUILD_TRACK,
+  electron: process.versions.electron,
+}));
 ipcMain.handle('get-unread-state', () => unreadStatePayload());
 // unreadDms/unreadBroadcastCount выше — только в памяти этого процесса, пополняются исключительно
 // живыми WS-событиями (см. markUnread). Если клиент был полностью закрыт (не просто свёрнут в
