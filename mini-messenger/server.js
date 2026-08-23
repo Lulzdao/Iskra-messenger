@@ -479,6 +479,19 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- Файлы обновлений клиента ----------
+// Клиент сам проверяет наличие новой версии и качает её отсюда (см. electron-updater в main.js
+// десктоп-клиента). Отдельный сервер под это не нужен — у нас уже есть доступ ко всем машинам.
+// Внутри — по папке на каждую сборку: updates/win7/ и updates/win10/. Раскладывать их обязательно
+// раздельно: сборка для Windows 10 несёт Electron, который на Windows 7 просто не запускается,
+// и клиент, скачавший чужое обновление, перестанет открываться.
+// В каждой папке лежит то, что положил electron-builder: сам .exe и latest.yml с версией и
+// контрольной суммой. Namespace без авторизации намеренно — это установочные файлы, не секрет,
+// а клиенту на этапе обновления может быть уже нечем предъявить токен.
+const updatesDir = path.join(__dirname, 'updates');
+if (!fs.existsSync(updatesDir)) fs.mkdirSync(updatesDir, { recursive: true });
+app.use('/updates', express.static(updatesDir));
+
 // Разрешаем запросы от десктоп-клиента (Electron грузит страницы с file://)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -773,6 +786,32 @@ app.post('/api/client-log', auth, (req, res) => {
     extra: extra !== undefined ? JSON.stringify(extra).slice(0, 2000) : null,
   });
   res.json({ ok: true });
+});
+
+// ---------- Журнал с конкретной машины ----------
+// Ошибки внутри окон рендереры шлют сюда сами по мере возникновения (см. /api/client-log выше). Но
+// у клиента есть и второй журнал — локальный client.log главного процесса, куда попадает то, что
+// рендерер отправить уже не может: падения самого окна и сбои обновления. Раньше он оставался на
+// машине сотрудника, и добраться до него можно было, только придя к человеку за компьютер.
+// Теперь администратор запрашивает его из веб-панели, клиент отвечает вот сюда.
+const clientLogDumps = new Map(); // "userId:hostname" -> { at, username, hostname, text }
+const CLIENT_LOG_DUMP_LIMIT = 400 * 1024;
+
+app.post('/api/client-log-file', auth, express.text({ limit: '2mb', type: () => true }), (req, res) => {
+  const hostname = String(req.query.host || '?').slice(0, 64);
+  const text = String(req.body || '').slice(-CLIENT_LOG_DUMP_LIMIT); // хвост: интересен конец, а не начало
+  clientLogDumps.set(`${req.user.id}:${hostname}`, {
+    at: Date.now(), username: req.user.username, hostname, text,
+  });
+  logServer('INFO', 'client_log_received', { userId: req.user.id, hostname, bytes: text.length });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/client-log', auth, requireCapability('can_admin'), (req, res) => {
+  const key = `${Number(req.query.userId)}:${String(req.query.host || '')}`;
+  const dump = clientLogDumps.get(key);
+  if (!dump) return res.status(404).json({ error: 'Журнал с этой машины ещё не получен' });
+  res.json(dump);
 });
 
 // ---------- Профиль (свой аккаунт) ----------
@@ -1160,6 +1199,94 @@ app.get('/api/admin/history/dm/:u1/:u2', auth, requireCapability('can_admin'), (
   res.json(dmHistoryAll.all(a, b, b, a, beforeId(req)).reverse().map(normalizeRow));
 });
 
+// ---------- Обновления клиентов ----------
+// Под этим именем к серверу подключается веб-панель администратора (см. connectPresenceWs в
+// public/index.html) — рабочим местом она не является.
+const ADMIN_WEB_HOSTNAME = 'Веб-панель администратора';
+// Какая версия сейчас выложена на сервере — читаем прямо из latest.yml, который положил
+// electron-builder. Полноценный разбор YAML ради одного поля не нужен и потянул бы зависимость:
+// строка "version: 1.0.1" в этом файле всегда первая и всегда такого вида.
+function publishedVersion(track) {
+  try {
+    const text = fs.readFileSync(path.join(updatesDir, track, 'latest.yml'), 'utf8');
+    const m = text.match(/^version:\s*(\S+)/m);
+    const f = text.match(/^path:\s*(\S+)/m);
+    return m ? { version: m[1], file: f ? f[1] : null } : null;
+  } catch { return null; }
+}
+app.get('/api/admin/update-published', auth, requireCapability('can_admin'), (req, res) => {
+  res.json({ win7: publishedVersion('win7'), win10: publishedVersion('win10') });
+});
+
+// Кто сейчас на связи и с какой версией. Один человек может сидеть с нескольких компьютеров и
+// держать несколько окон — схлопываем по паре "сотрудник + компьютер", иначе в списке было бы по
+// строке на каждое открытое окно чата.
+app.get('/api/admin/clients', auth, requireCapability('can_admin'), (req, res) => {
+  const byMachine = new Map();
+  for (const meta of connMeta.values()) {
+    // Сама веб-панель тоже держит подключение (чтобы показывать, кто в сети), но это не рабочее
+    // место: обновлять там нечего и журнала у неё нет. В списке машин она была бы только шумом.
+    if (meta.hostname === ADMIN_WEB_HOSTNAME) continue;
+    const key = `${meta.userId}:${meta.hostname}`;
+    const prev = byMachine.get(key);
+    if (!prev) {
+      const u = getUserById.get(meta.userId);
+      byMachine.set(key, {
+        userId: meta.userId,
+        user: u ? u.display_name : `#${meta.userId}`,
+        hostname: meta.hostname,
+        version: meta.appVersion || null,
+        track: meta.buildTrack || null,
+        connections: 1,
+        hasLogDump: clientLogDumps.has(key),
+      });
+    } else {
+      prev.connections += 1;
+      // Версию берём с того подключения, которое её сообщило: у окон, открытых старым клиентом
+      // после обновления сборки, её может не быть.
+      if (!prev.version && meta.appVersion) { prev.version = meta.appVersion; prev.track = meta.buildTrack; }
+    }
+  }
+  res.json([...byMachine.values()].sort((a, b) => a.user.localeCompare(b.user, 'ru')));
+});
+
+// Принудительное обновление конкретной машины. Отправляем команду во все её подключения — клиент
+// скачает обновление и перезапустится сам (см. force-update в main.js десктоп-клиента).
+app.post('/api/admin/force-update', auth, requireCapability('can_admin'), (req, res) => {
+  const { userId, host } = req.body || {};
+  const target = toUserId(userId);
+  if (!target) return res.status(400).json({ error: 'Не указан сотрудник' });
+  const out = JSON.stringify({ type: 'force-update' });
+  let sent = 0;
+  for (const [ws, meta] of connMeta) {
+    if (meta.userId !== target) continue;
+    if (host && meta.hostname !== host) continue;
+    sendTo(ws, out);
+    sent += 1;
+  }
+  logServer('INFO', 'force_update_requested', { adminId: req.user.id, userId: target, host, connections: sent });
+  if (!sent) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  res.json({ ok: true, sent });
+});
+
+// Запрос журнала с машины сотрудника — клиент пришлёт его на /api/client-log-file (см. выше).
+app.post('/api/admin/request-log', auth, requireCapability('can_admin'), (req, res) => {
+  const { userId, host } = req.body || {};
+  const target = toUserId(userId);
+  if (!target) return res.status(400).json({ error: 'Не указан сотрудник' });
+  const out = JSON.stringify({ type: 'send-log' });
+  let sent = 0;
+  for (const [ws, meta] of connMeta) {
+    if (meta.userId !== target) continue;
+    if (host && meta.hostname !== host) continue;
+    sendTo(ws, out);
+    sent += 1;
+  }
+  logServer('INFO', 'client_log_requested', { adminId: req.user.id, userId: target, host });
+  if (!sent) return res.status(409).json({ error: 'Этот клиент сейчас не в сети' });
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/stats', auth, requireCapability('can_admin'), (req, res) => {
   const onlineUserIds = new Set();
   for (const meta of connMeta.values()) onlineUserIds.add(meta.userId);
@@ -1334,6 +1461,10 @@ wss.on('connection', (ws, req) => {
   // Имя ПК присылает сам клиент, то есть доверять ему нельзя: обрезаем по длине, чтобы через него
   // нельзя было раздуть снимок присутствия (он рассылается всем) или дневной лог сервера.
   const hostname = (url.searchParams.get('host') || 'неизвестный ПК').slice(0, 64);
+  // Версия клиента и трек сборки — чтобы администратор видел в панели, у кого что установлено и до
+  // кого обновление ещё не доехало. Как и имя ПК, приходят от клиента, поэтому обрезаем по длине.
+  const appVersion = (url.searchParams.get('ver') || '').slice(0, 20) || null;
+  const buildTrack = (url.searchParams.get('track') || '').slice(0, 20) || null;
   let payload;
   try { payload = jwt.verify(token, SECRET); } catch { logServer('WARN', 'ws_auth_failed', { ip: req.socket.remoteAddress }); return ws.close(); }
   const user = getUserById.get(payload.id);
@@ -1349,7 +1480,7 @@ wss.on('connection', (ws, req) => {
 
   if (!online.has(user.id)) online.set(user.id, new Set());
   online.get(user.id).add(ws);
-  connMeta.set(ws, { userId: user.id, hostname, state: 'active', lastSeen: Date.now(), idleSince: null });
+  connMeta.set(ws, { userId: user.id, hostname, appVersion, buildTrack, state: 'active', lastSeen: Date.now(), idleSince: null });
   // Снимок присутствия этому сокету — обязательно отдельно от broadcastPresence(): та теперь молчит,
   // когда снимок не изменился (см. её комментарий), а при втором подключении с того же ПК он и не
   // меняется — новое окно осталось бы вообще без списка, кто сейчас в сети.
