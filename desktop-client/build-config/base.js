@@ -31,6 +31,14 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
+    // Брендинг ассистированного установщика (доступен только при oneClick: false выше).
+    // installerHeader — полоса 150×57 на внутренних страницах мастера (выбор папки, прогресс).
+    // installerSidebar — картинка 164×314 на экранах приветствия и финиша, тот же файл берётся
+    // и для деинсталлятора (uninstallerSidebar не задан — electron-builder сам подставит этот же).
+    // Указаны явно, а не оставлены на конвенцию по умолчанию (electron-builder и без этого нашёл
+    // бы файлы с такими именами в build/) — чтобы не полагаться на негласное соглашение об именах.
+    installerHeader: 'build/installerHeader.bmp',
+    installerSidebar: 'build/installerSidebar.bmp',
   },
 
   // Белый список: всё, чего здесь нет, в установщик не попадает. Поэтому сама папка build-config/
