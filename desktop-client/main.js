@@ -71,6 +71,7 @@ const DEFAULT_SETTINGS = {
   broadcastSize: null,
   serverUrlOverride: null,   // переопределяет SERVER_URL из config.js без пересборки — см. Ctrl+S на экране входа
   autoUpdate: true,          // сама качать вышедшие обновления (ставятся при выходе) — см. setupUpdater
+  lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
 };
 
 function loadSettings() {
@@ -546,7 +547,14 @@ function setupUpdater() {
       // человек может печатать, — но и отменить он это не может: решение принято не им.
       // Небольшой паузы хватает, чтобы дописать фразу и понять, что происходит.
       sendToWindow(rosterWin, 'toast', { message: `Администратор запустил обновление до ${info.version}. Перезапуск через 15 секунд…` });
-      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(); }, 15000);
+      // (true, true) = тихая установка + автозапуск после нее. Без первого true NSIS-инсталлятор
+      // запускается БЕЗ флага /S — то есть показывает полный мастер установки (приветствие, выбор
+      // папки, прогресс, финиш), тот же самый, что при установке с нуля. Именно это и выглядело
+      // "как простая переустановка" — раньше здесь стоял quitAndInstall() без аргументов, а у него
+      // isSilent по умолчанию false (см. BaseUpdater.js в electron-updater). С флагом NSIS ставит
+      // обновление в фоне без единого окна, и после установки сам перезапускает приложение — второй
+      // true как раз про это.
+      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(true, true); }, 15000);
     }
   });
   autoUpdater.on('error', (err) => {
@@ -557,6 +565,24 @@ function setupUpdater() {
   });
 
   checkForUpdates(); // разовая проверка на старте; дальше — только по кнопке в настройках
+}
+
+// Приветствие после обновления: раньше единственным видимым следом того, что обновление вообще
+// произошло, было закрытие и повторное открытие приложения — никакого "готово, вот что изменилось".
+// Сверяем версию с тем, что запомнили на предыдущем запуске: если она выросла — значит, только что
+// обновились (сами, по кнопке или принудительно администратором, неважно каким путём), и стоит
+// сказать об этом прямо. Если lastSeenVersion пуст — это первая установка вообще, а не обновление,
+// тогда молчим и просто запоминаем версию.
+function announceVersionIfUpdated() {
+  const current = app.getVersion();
+  const previous = settings.lastSeenVersion;
+  if (previous && previous !== current) {
+    sendToWindow(rosterWin, 'toast', { message: `Искра обновлена до версии ${current}` });
+  }
+  if (previous !== current) {
+    settings.lastSeenVersion = current;
+    saveSettings();
+  }
 }
 
 function checkForUpdates() {
@@ -590,7 +616,10 @@ ipcMain.on('install-update', () => {
   // отменит закрытие и спрячет окно в трей (см. createRoster), приложение не выйдет,
   // и установка не начнётся.
   isQuitting = true;
-  autoUpdater.quitAndInstall();
+  // (true, true) — см. подробный комментарий у второго вызова quitAndInstall выше: без первого
+  // true это была бы полноценная переустановка с мастером Windows, без второго — пришлось бы
+  // запускать приложение вручную после того, как установщик тихо закончит работу.
+  autoUpdater.quitAndInstall(true, true);
 });
 
 ipcMain.on('open-chat', (event, payload) => {
@@ -775,6 +804,9 @@ app.whenReady().then(() => {
   createTray();
   startIdleWatch();
   setupUpdater();
+  // once, а не на каждый did-finish-load: сказать "обновлено" нужно один раз за запуск, а не
+  // при каждой перезагрузке страницы (например, после выхода из аккаунта — см. logout).
+  rosterWin.webContents.once('did-finish-load', announceVersionIfUpdated);
 
   // Рендерер вылетел целиком (не просто JS-исключение внутри страницы, а сам процесс окна) —
   // в этот момент он уже не может сам отправить лог на сервер, поэтому только локально.
