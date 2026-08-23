@@ -487,6 +487,21 @@ function sendUpdateState(state) {
   sendToWindow(rosterWin, 'update-state', state);
 }
 
+// electron-updater кладёт в ошибку весь ответ сервера целиком — со всеми заголовками и куском
+// HTML-страницы 404 в придачу. В панели настроек из этого получается простыня на десяток строк,
+// по которой всё равно не понять, что делать. Поэтому наружу отдаём короткую фразу по-русски, а
+// полный текст пишем в client.log (в папке данных пользователя) — там он и нужен, когда разбираются.
+function shortUpdateError(err) {
+  const raw = String((err && (err.stack || err.message)) || err);
+  // Самый частый случай в работе: сборки на сервер ещё не выложили, значит latest.yml нет и в ответ
+  // приходит 404. Это не поломка — так и говорим, без слова "ошибка".
+  if (/\b404\b|latest\.yml|Cannot find .*\.yml/i.test(raw)) return 'На сервере пока нет файлов обновления';
+  if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|ECONNRESET|socket hang up/i.test(raw)) return 'Сервер недоступен';
+  // Понадобится, когда сервер переедет на https со своим сертификатом — см. CONCEPT-roadmap.md.
+  if (/certificate|CERT_|ERR_TLS|self.signed/i.test(raw)) return 'Сертификат сервера не признан доверенным';
+  return 'Не удалось проверить обновления';
+}
+
 function setupUpdater() {
   // В режиме разработки (npm start) обновляться неоткуда и незачем: app-update.yml появляется
   // только в собранном приложении, и electron-updater без него бросает ошибку.
@@ -506,9 +521,9 @@ function setupUpdater() {
   autoUpdater.on('update-downloaded', (info) => sendUpdateState({ state: 'downloaded', version: info.version }));
   autoUpdater.on('error', (err) => {
     // Ошибку показываем в настройках, а не глотаем: молча не обновляющийся клиент — это то, что
-    // замечают через полгода. Самая вероятная причина в рабочей сети — недоступный сервер.
-    logLocal('updater_error', { message: err && err.message });
-    sendUpdateState({ state: 'error', message: String((err && err.message) || err) });
+    // замечают через полгода. Но показываем коротко — полный текст только в лог (см. shortUpdateError).
+    logLocal('updater_error', { message: err && err.message, stack: err && err.stack });
+    sendUpdateState({ state: 'error', message: shortUpdateError(err) });
   });
 
   checkForUpdates(); // разовая проверка на старте; дальше — только по кнопке в настройках
@@ -524,7 +539,8 @@ function checkForUpdates() {
     autoUpdater.autoDownload = !!settings.autoUpdate;
     autoUpdater.checkForUpdates();
   } catch (e) {
-    sendUpdateState({ state: 'error', message: String(e.message || e) });
+    logLocal('updater_error', { message: e && e.message, stack: e && e.stack });
+    sendUpdateState({ state: 'error', message: shortUpdateError(e) });
   }
 }
 

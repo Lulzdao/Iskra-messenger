@@ -207,6 +207,12 @@
      бегунок — иначе на Windows слайдер выглядел бы стандартным системным виджетом не в цвет темы. */
   #profilePanel input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: var(--panel-2); outline: none; cursor: pointer; }
   #profilePanel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  /* Текстовая кнопка в панели настроек. Класс .icon-btn для такого не годится: он жёстко задан как
+     квадрат 27×27 под иконку, и надпись из двух слов ломается пополам внутри него. */
+  #profilePanel .pp-btn { width: auto; height: auto; padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  #profilePanel .pp-btn:hover { background: var(--hover); border-color: var(--accent); }
+  #profilePanel .pp-btn:disabled { opacity: .5; cursor: default; }
+  #profilePanel .pp-btn:disabled:hover { background: var(--panel-2); border-color: var(--border); }
   #profilePanel #ppLogoutBtn { margin-top: 2px; padding: 9px; border: 1px solid var(--danger); border-radius: 8px; background: transparent; color: var(--danger); font-weight: 600; cursor: pointer; }
   #profilePanel #ppLogoutBtn:hover { background: var(--danger); color: #fff; }
 </style>
@@ -322,9 +328,9 @@
           <div class="t">Состояние</div>
           <div class="d" id="ppUpdateStatus">Проверка не выполнялась</div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="icon-btn" id="ppCheckUpdateBtn">Проверить сейчас</button>
-          <button class="icon-btn" id="ppInstallUpdateBtn" style="display:none;">Перезапустить и обновить</button>
+        <div style="display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;">
+          <button class="pp-btn" id="ppCheckUpdateBtn">Проверить сейчас</button>
+          <button class="pp-btn" id="ppInstallUpdateBtn" style="display:none;">Перезапустить и обновить</button>
         </div>
       </div>
 
@@ -551,7 +557,9 @@ function paintUpdateState(s) {
     available: () => `Доступна версия ${s.version}. Нажмите «Проверить сейчас», чтобы скачать.`,
     downloading: () => (s.percent != null ? `Загрузка обновления — ${s.percent}%` : 'Загрузка обновления…'),
     downloaded: () => `Версия ${s.version} загружена. Установится при выходе из приложения — или перезапустите сейчас.`,
-    error: () => `Не удалось проверить обновления: ${s.message || 'сервер недоступен'}`,
+    // message приходит уже готовой короткой фразой (см. shortUpdateError в main.js), полный текст
+    // ошибки лежит в client.log — приписывать сюда что-то ещё незачем.
+    error: () => s.message || 'Не удалось проверить обновления',
   };
   text.textContent = (byState[s.state] || byState.idle)();
   installBtn.style.display = s.state === 'downloaded' ? '' : 'none';
