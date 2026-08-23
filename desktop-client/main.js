@@ -40,6 +40,13 @@ if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
 const LOG_PATH = path.join(app.getPath('userData'), 'client.log');
 function logLocal(event, meta = {}) {
   fs.appendFile(LOG_PATH, `${new Date().toISOString()} [${event}] ${JSON.stringify(meta)}\n`, () => {});
+  // ...и заодно на сервер, чтобы это было видно в разделе "Логи" веб-панели. Раньше события
+  // главного процесса (сбои обновления, падения окон) оставались только здесь, на машине
+  // сотрудника, — добраться до них можно было, лишь придя к человеку за компьютер.
+  // Отправляет ростер: токен для обращения к серверу есть только у него. Через try, потому что
+  // logLocal вызывается в том числе из обработчика неперехваченных исключений — он может
+  // сработать раньше, чем появится само окно ростера.
+  try { sendToWindow(rosterWin, 'report-to-server', { kind: event, meta }); } catch { /* окна ещё/уже нет */ }
 }
 process.on('uncaughtException', (err) => {
   logLocal('main_uncaught_exception', { message: err.message, stack: err.stack });
@@ -502,6 +509,19 @@ function shortUpdateError(err) {
   return 'Не удалось проверить обновления';
 }
 
+// Обновление, запущенное администратором из веб-панели: качаем и ставим без вопросов. Обычный
+// сценарий (см. ниже) ждёт выхода из приложения, но здесь администратор действует осознанно —
+// например, когда нужно срочно раскатить исправление.
+let forceInstallAfterDownload = false;
+
+function forceUpdateNow() {
+  if (!app.isPackaged) return;
+  logLocal('update_forced_by_admin', {});
+  forceInstallAfterDownload = true;
+  autoUpdater.autoDownload = true;
+  checkForUpdates();
+}
+
 function setupUpdater() {
   // В режиме разработки (npm start) обновляться неоткуда и незачем: app-update.yml появляется
   // только в собранном приложении, и electron-updater без него бросает ошибку.
@@ -518,7 +538,17 @@ function setupUpdater() {
     version: info.version,
   }));
   autoUpdater.on('download-progress', (p) => sendUpdateState({ state: 'downloading', percent: Math.round(p.percent) }));
-  autoUpdater.on('update-downloaded', (info) => sendUpdateState({ state: 'downloaded', version: info.version }));
+  autoUpdater.on('update-downloaded', (info) => {
+    logLocal('update_downloaded', { version: info.version });
+    sendUpdateState({ state: 'downloaded', version: info.version });
+    if (forceInstallAfterDownload) {
+      // Обновление запустил администратор. Совсем без предупреждения окна закрывать нельзя —
+      // человек может печатать, — но и отменить он это не может: решение принято не им.
+      // Небольшой паузы хватает, чтобы дописать фразу и понять, что происходит.
+      sendToWindow(rosterWin, 'toast', { message: `Администратор запустил обновление до ${info.version}. Перезапуск через 15 секунд…` });
+      setTimeout(() => { isQuitting = true; autoUpdater.quitAndInstall(); }, 15000);
+    }
+  });
   autoUpdater.on('error', (err) => {
     // Ошибку показываем в настройках, а не глотаем: молча не обновляющийся клиент — это то, что
     // замечают через полгода. Но показываем коротко — полный текст только в лог (см. shortUpdateError).
@@ -547,6 +577,13 @@ function checkForUpdates() {
 // ---------- IPC от окон ----------
 ipcMain.handle('get-update-state', () => updateState);
 ipcMain.on('check-updates', () => checkForUpdates());
+ipcMain.on('force-update', () => forceUpdateNow());
+// Администратор запросил журнал этой машины из веб-панели. Отдаём его ростеру — отправить на
+// сервер может только он, токен есть лишь у него.
+ipcMain.handle('read-local-log', () => {
+  try { return fs.readFileSync(LOG_PATH, 'utf8'); }
+  catch { return '(локальный журнал пуст или недоступен)'; }
+});
 ipcMain.on('download-update', () => { if (app.isPackaged) autoUpdater.downloadUpdate(); });
 ipcMain.on('install-update', () => {
   // isQuitting обязателен ДО quitAndInstall: иначе обработчик close у окна списка контактов

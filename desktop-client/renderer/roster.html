@@ -428,7 +428,10 @@ let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
-  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
+    // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
+    // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
   // Реальный статус на момент подключения, а не всегда "в сети" — иначе новое WS-подключение
   // (например, при открытии окна чата) на пару секунд перебивало настоящий AFK-статус человека,
   // пока не придёт очередной 15-секундный тик с исправлением.
@@ -443,6 +446,9 @@ function connectWs() {
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'presence') { presence = data.users; updatePresenceOnly(); }
+    // Команды администратора из веб-панели. Выполняет их главный процесс — окно только передаёт.
+    if (data.type === 'force-update') { desktop.forceUpdate(); return; }
+    if (data.type === 'send-log') { sendLocalLogToServer(); return; }
     if (data.type === 'message' && data.from_id !== me.id) {
       const files = data.files || [];
       let body = data.text || '';
@@ -539,6 +545,36 @@ desktop.getAppInfo().then(({ version, track, electron }) => {
   const label = BUILD_TRACK_LABEL[track] || track;
   document.getElementById('ppAbout').textContent = `Искра ${version} · ${label} · Electron ${electron}`;
 }).catch(() => { /* не критично: без этой строки всё остальное работает */ });
+
+// ---------- Журнал этой машины и события главного процесса ----------
+// Главный процесс пишет свои события (сбои обновления, падения окон) в локальный файл и присылает
+// их сюда — потому что обратиться к серверу может только это окно, токен есть лишь у него.
+// Без этого такие события оставались бы на машине сотрудника и до раздела "Логи" не доходили.
+desktop.onReportToServer(({ kind, meta }) => {
+  if (!token || !serverUrl) return; // ещё не вошли — отправлять нечем и некуда
+  fetch(`${serverUrl}/api/client-log`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind, source: 'main', hostname: desktop.hostname,
+      message: (meta && (meta.message || meta.reason)) || kind,
+      extra: meta,
+    }),
+  }).catch(() => { /* сервер недоступен — теряем запись, повторять ради лога не будем */ });
+});
+
+// Администратор запросил журнал этой машины из веб-панели (см. /api/admin/request-log).
+async function sendLocalLogToServer() {
+  if (!token || !serverUrl) return;
+  try {
+    const text = await desktop.readLocalLog();
+    await fetch(`${serverUrl}/api/client-log-file?host=${encodeURIComponent(desktop.hostname)}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'text/plain' },
+      body: text,
+    });
+  } catch { /* не смогли — администратор просто увидит, что журнал не пришёл */ }
+}
 
 // ---------- Обновление приложения ----------
 // Состояние считает главный процесс (см. setupUpdater в main.js), здесь только показ. Кнопка

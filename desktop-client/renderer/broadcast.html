@@ -757,7 +757,10 @@ let wsLostTimer = null; // см. showConnectionLostModal в ui-kit.js
 let wsReconnectDelay = 2000; // экспоненциальный бэкофф между попытками (см. onclose ниже)
 function connectWs() {
   const wsUrl = serverUrl.replace(/^http/, 'ws');
-  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`);
+  ws = new WebSocket(`${wsUrl}?token=${token}&host=${encodeURIComponent(desktop.hostname)}`
+    // Версия и сборка — чтобы администратор в веб-панели видел, у кого что установлено, и
+    // мог понять, до кого обновление ещё не доехало (см. /api/admin/clients в server.js).
+    + `&ver=${encodeURIComponent(desktop.appVersion)}&track=${encodeURIComponent(desktop.buildTrack)}`);
   ws.onopen = async () => {
     clearTimeout(wsLostTimer);
     wsLostTimer = null;

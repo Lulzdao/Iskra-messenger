@@ -100,6 +100,7 @@
     <div class="nav-item" data-view="history">Переписки</div>
     <div class="nav-item" data-view="broadcast">Рассылка</div>
     <div class="nav-item" data-view="files">Файлы</div>
+    <div class="nav-item" data-view="updates">Клиенты</div>
     <div class="nav-item" data-view="logs">Логи</div>
     <div class="foot">
       <div class="who" id="whoName"></div>
@@ -240,6 +241,42 @@
       </div>
     </div>
 
+    <div class="view" id="view-updates">
+      <h2>Клиенты и обновления</h2>
+
+      <div class="panel">
+        <h3>Что выложено на сервере</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версии из папок <code>updates/win7</code> и <code>updates/win10</code>. Если пусто —
+          сборки ещё не выложены, и клиенты обновляться не будут.
+        </p>
+        <div id="publishedVersions" style="display:flex; gap:18px; flex-wrap:wrap;"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Кто сейчас в сети</h3>
+        <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+          Версия видна только у тех, кто сейчас подключён. «Обновить» скачает новую версию на эту
+          машину и перезапустит приложение — сотрудник получит предупреждение за 15 секунд.
+          «Журнал» запросит с машины её локальный файл ошибок: туда попадает то, чего нет в общих
+          логах — падения окон и сбои обновления.
+        </p>
+        <div class="row-flex" style="margin-bottom:10px;">
+          <button class="action" onclick="loadClients()">Обновить список</button>
+          <span id="clientsSummary" style="color:var(--muted); font-size:12px;"></span>
+        </div>
+        <table>
+          <thead><tr><th>Сотрудник</th><th>Компьютер</th><th>Версия</th><th>Сборка</th><th>Действия</th></tr></thead>
+          <tbody id="clientsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="panel" id="clientLogPanel" style="display:none;">
+        <h3 id="clientLogTitle">Журнал с машины</h3>
+        <pre id="clientLogText" style="max-height:340px; overflow:auto; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:10px; font-size:11.5px; white-space:pre-wrap; word-break:break-word;"></pre>
+      </div>
+    </div>
+
     <div class="view" id="view-logs">
       <h2>Логи</h2>
       <div class="panel">
@@ -333,6 +370,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     item.classList.add('active');
     document.getElementById('view-' + item.dataset.view).classList.add('active');
+    // Список подключённых меняется постоянно — перечитываем при каждом заходе в раздел, а не
+    // показываем то, что было на момент входа в панель.
+    if (item.dataset.view === 'updates') loadClients();
   };
 });
 
@@ -646,6 +686,90 @@ async function loadLogs() {
   } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
 }
 
+// ---------- Клиенты и обновления ----------
+let publishedCache = {};
+
+async function loadPublishedVersions() {
+  const box = document.getElementById('publishedVersions');
+  try {
+    publishedCache = await api('/api/admin/update-published');
+    const cell = (track, label) => {
+      const p = publishedCache[track];
+      return `<div><div style="color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px;">${label}</div>`
+        + (p ? `<div style="font-size:18px; font-weight:700;">${escapeHtml(p.version)}</div>`
+             + `<div style="color:var(--muted); font-size:11px;">${escapeHtml(p.file || '')}</div>`
+             : `<div style="font-size:14px; color:var(--warn)">не выложено</div>`)
+        + `</div>`;
+    };
+    box.innerHTML = cell('win7', 'Windows 7 / 8.1') + cell('win10', 'Windows 10+');
+  } catch (e) { box.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`; }
+}
+
+async function loadClients() {
+  const body = document.getElementById('clientsBody');
+  body.innerHTML = '<tr><td colspan="5">Загрузка...</td></tr>';
+  try {
+    await loadPublishedVersions();
+    const clients = await api('/api/admin/clients');
+    document.getElementById('clientsSummary').textContent =
+      clients.length ? `Машин на связи: ${clients.length}` : '';
+    body.innerHTML = clients.map(c => {
+      // Устаревшей считаем только тогда, когда есть с чем сравнивать: и версия клиента известна,
+      // и на сервере что-то выложено для его трека.
+      const pub = c.track && publishedCache[c.track] ? publishedCache[c.track].version : null;
+      const outdated = pub && c.version && pub !== c.version;
+      const verCell = c.version
+        ? `${escapeHtml(c.version)}${outdated ? ` <span style="color:var(--warn)">→ ${escapeHtml(pub)}</span>` : ''}`
+        : '<span style="color:var(--muted)">—</span>';
+      const trackLabel = { win7: 'Windows 7 / 8.1', win10: 'Windows 10+', dev: 'из исходников' }[c.track] || '—';
+      return `<tr>
+        <td>${escapeHtml(c.user)}</td>
+        <td>${escapeHtml(c.hostname)}</td>
+        <td>${verCell}</td>
+        <td style="color:var(--muted)">${escapeHtml(trackLabel)}</td>
+        <td class="row-flex">
+          <button class="action" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="forceUpdate(this.dataset.uid, this.dataset.host)"${outdated ? '' : ' disabled title="Версия уже актуальна"'}>Обновить</button>
+          <button class="action ghost" data-uid="${c.userId}" data-host="${escapeHtml(c.hostname)}"
+            onclick="requestClientLog(this.dataset.uid, this.dataset.host)">Журнал</button>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--muted)">Сейчас никто не подключён</td></tr>';
+  } catch (e) { body.innerHTML = `<tr><td colspan="5">Ошибка: ${escapeHtml(e.message)}</td></tr>`; }
+}
+
+async function forceUpdate(userId, host) {
+  if (!confirm(`Запустить обновление на «${host}»? Приложение у сотрудника перезапустится через 15 секунд после загрузки.`)) return;
+  try {
+    await api('/api/admin/force-update', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+    alert('Команда отправлена. Обновление займёт некоторое время — список можно обновить позже.');
+  } catch (e) { alert(e.message); }
+}
+
+async function requestClientLog(userId, host) {
+  const panel = document.getElementById('clientLogPanel');
+  const text = document.getElementById('clientLogText');
+  document.getElementById('clientLogTitle').textContent = `Журнал с машины «${host}»`;
+  panel.style.display = '';
+  text.textContent = 'Запрашиваем журнал у клиента…';
+  try {
+    await api('/api/admin/request-log', { method: 'POST', body: JSON.stringify({ userId: Number(userId), host }) });
+  } catch (e) { text.textContent = 'Ошибка: ' + e.message; return; }
+  // Клиент отвечает не мгновенно — журнал приходит на сервер отдельным запросом. Опрашиваем
+  // несколько раз, а не ждём один раз наугад.
+  for (let i = 0; i < 10; i++) {
+    await new Promise(r => setTimeout(r, 700));
+    try {
+      const dump = await api(`/api/admin/client-log?userId=${encodeURIComponent(userId)}&host=${encodeURIComponent(host)}`);
+      if (Date.now() - dump.at < 60000) {
+        text.textContent = dump.text || '(журнал пуст)';
+        return;
+      }
+    } catch { /* ещё не пришёл — ждём дальше */ }
+  }
+  text.textContent = 'Клиент не прислал журнал. Возможно, он только что отключился.';
+}
+
 async function loadBroadcastFeed() {
   const items = await api('/api/broadcasts');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
@@ -692,6 +816,7 @@ async function startDash() {
   await loadUploadSettings();
   document.getElementById('logsDay').value = todayStr();
   await loadLogs();
+  await loadClients();
   connectPresenceWs();
   setInterval(refreshAll, 30000);
 }
