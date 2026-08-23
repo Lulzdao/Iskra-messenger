@@ -19,7 +19,7 @@ module.exports = {
   // Свой адрес обновлений — см. комментарий в win7.js.
   publish: [{ provider: 'generic', url: feedUrl('win10') }],
   extraMetadata: { buildTrack: 'win10' },
-  artifactName: 'iskra-setup-win10-${arch}-${version}.${ext}',
+  artifactName: 'iskra-setup-win10-${version}.${ext}', // без ${arch} — см. пояснение в win7.js
   nsis: {
     ...base.nsis,
     // Отказ установиться на Windows старше 10 — см. сам файл. Разными именами установщиков
