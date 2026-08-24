@@ -12,6 +12,7 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
+const https = require('https'); // используется, только если заданы TLS_CERT/TLS_KEY — см. createAppServer
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1350,8 +1351,51 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
   res.json({ entries: entries.slice(0, LOG_VIEW_LIMIT), truncated: entries.length > LOG_VIEW_LIMIT, total: entries.length });
 });
 
+// ---------- HTTPS ----------
+// TLS разворачивает сам сервер — обратного прокси перед ним нет намеренно. Так не остаётся
+// параллельного незашифрованного порта, про который легко забыть (а он обнулил бы весь смысл),
+// не нужно отдельно пробрасывать WebSocket, и req.ip остаётся настоящим адресом сотрудника,
+// от которого зависит защита от подбора пароля.
+//
+// Шифрование включается САМО, как только заданы пути к сертификату, — отдельного переключателя нет,
+// чтобы не было состояния "сертификат положили, а включить забыли". Пути не заданы — сервер
+// работает по http, как раньше (нужно для локальной разработки и до момента установки сертификата).
+//
+// TLS_CERT — обязательно ПОЛНАЯ цепочка (сертификат сервера + промежуточные УЦ), а не только
+// сертификат сервера. Проверено вживую: без промежуточного клиент получает
+// "unable to verify the first certificate". Браузеры на доменных машинах иногда выкручиваются,
+// дотягивая промежуточный сертификат сами, а Node (то есть автообновление клиента) — никогда,
+// поэтому в браузере всё выглядело бы исправно, и причину искали бы не там.
+//
+//   TLS_CERT=/etc/iskra/fullchain.crt TLS_KEY=/etc/iskra/server.key npm start
+//
+// Ключ должен быть без пароля, иначе сервер не поднимется без ручного ввода при каждом запуске.
+const TLS_CERT = process.env.TLS_CERT;
+const TLS_KEY = process.env.TLS_KEY;
+
+function createAppServer() {
+  if (!TLS_CERT || !TLS_KEY) {
+    logServer('WARN', 'tls_disabled', { reason: 'TLS_CERT/TLS_KEY не заданы — трафик идёт открытым текстом' });
+    return http.createServer(app);
+  }
+  const options = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
+  // Считаем сертификаты в цепочке — если он один, промежуточных нет, и часть клиентов
+  // (в первую очередь автообновление) не сможет проверить сервер. Молча это пропускать нельзя.
+  const chainLength = (String(options.cert).match(/BEGIN CERTIFICATE/g) || []).length;
+  if (chainLength < 2) {
+    logServer('WARN', 'tls_chain_incomplete', {
+      certificates: chainLength,
+      hint: 'В TLS_CERT только сертификат сервера. Добавьте промежуточные УЦ: cat server.crt chain.crt > fullchain.crt',
+    });
+  }
+  logServer('INFO', 'tls_enabled', { cert: TLS_CERT, certificates: chainLength });
+  return https.createServer(options, app);
+}
+
 // ---------- WebSocket (реалтайм + presence) ----------
-const server = http.createServer(app);
+// WebSocket цепляется к серверу одинаково и для http, и для https — при TLS клиенты сами перейдут
+// на wss:// (адрес выводится из адреса сервера, см. connectWs в окнах клиента).
+const server = createAppServer();
 const wss = new WebSocketServer({ server });
 
 const online = new Map();   // userId -> Set(ws)              — для маршрутизации сообщений

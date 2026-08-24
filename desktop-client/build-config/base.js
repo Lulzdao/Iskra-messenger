@@ -50,5 +50,8 @@ module.exports = {
     'renderer/**/*',
     'tray-icon.png',
     'build/icon.ico',
+    // Корневой сертификат домена — нужен главному процессу, чтобы Node доверял серверу по https
+    // (см. trustOrganizationCa в main.js). Публичный файл, секрета не содержит.
+    'rosstat-root-ca.crt',
   ],
 };
