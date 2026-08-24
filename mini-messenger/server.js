@@ -12,7 +12,8 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
-const https = require('https'); // используется, только если заданы TLS_CERT/TLS_KEY — см. createAppServer
+const https = require('https'); // используется, только если сервер настроен на TLS — см. createAppServer
+const tls = require('tls');     // тем же: проверка того, что сервер реально отдаёт клиенту
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1357,39 +1358,111 @@ app.get('/api/admin/logs', auth, requireCapability('can_admin'), (req, res) => {
 // не нужно отдельно пробрасывать WebSocket, и req.ip остаётся настоящим адресом сотрудника,
 // от которого зависит защита от подбора пароля.
 //
-// Шифрование включается САМО, как только заданы пути к сертификату, — отдельного переключателя нет,
-// чтобы не было состояния "сертификат положили, а включить забыли". Пути не заданы — сервер
+// Шифрование включается САМО, как только задан сертификат, — отдельного переключателя нет,
+// чтобы не было состояния "сертификат положили, а включить забыли". Ничего не задано — сервер
 // работает по http, как раньше (нужно для локальной разработки и до момента установки сертификата).
 //
-// TLS_CERT — обязательно ПОЛНАЯ цепочка (сертификат сервера + промежуточные УЦ), а не только
-// сертификат сервера. Проверено вживую: без промежуточного клиент получает
-// "unable to verify the first certificate". Браузеры на доменных машинах иногда выкручиваются,
-// дотягивая промежуточный сертификат сами, а Node (то есть автообновление клиента) — никогда,
-// поэтому в браузере всё выглядело бы исправно, и причину искали бы не там.
+// Два способа задать сертификат, работает любой:
 //
-//   TLS_CERT=/etc/iskra/fullchain.crt TLS_KEY=/etc/iskra/server.key npm start
+//   1. PFX (.pfx / .p12) — то, что выдаёт удостоверяющий центр Windows-домена как есть.
+//      Ничего конвертировать не нужно, Node читает этот формат сам:
 //
-// Ключ должен быть без пароля, иначе сервер не поднимется без ручного ввода при каждом запуске.
+//        set TLS_PFX=C:\iskra\server.pfx
+//        set TLS_PFX_PASSWORD=пароль-которым-защищён-файл
+//        npm start
+//
+//   2. PEM — отдельно сертификат и ключ (обычный вариант для Linux):
+//
+//        TLS_CERT=/etc/iskra/fullchain.crt TLS_KEY=/etc/iskra/server.key npm start
+//
+//      Здесь TLS_CERT — обязательно ПОЛНАЯ цепочка (сертификат сервера + промежуточные УЦ), а не
+//      только сертификат сервера, и ключ должен быть без пароля, иначе сервер не поднимется без
+//      ручного ввода при каждом запуске.
+//
+// Пароль от PFX — только в переменной окружения или в скрипте запуска, в репозитории ему не место.
+const TLS_PFX = process.env.TLS_PFX;
+const TLS_PFX_PASSWORD = process.env.TLS_PFX_PASSWORD;
 const TLS_CERT = process.env.TLS_CERT;
 const TLS_KEY = process.env.TLS_KEY;
 
 function createAppServer() {
-  if (!TLS_CERT || !TLS_KEY) {
-    logServer('WARN', 'tls_disabled', { reason: 'TLS_CERT/TLS_KEY не заданы — трафик идёт открытым текстом' });
-    return http.createServer(app);
+  if (TLS_PFX) {
+    const options = { pfx: fs.readFileSync(TLS_PFX) };
+    if (TLS_PFX_PASSWORD) options.passphrase = TLS_PFX_PASSWORD;
+    // Пароль не подошёл или файл битый — это выясняется здесь, при чтении, а не при первом
+    // подключении сотрудника. Падаем сразу и с понятной причиной.
+    try {
+      tls.createSecureContext(options);
+    } catch (err) {
+      logServer('ERROR', 'tls_pfx_unreadable', {
+        pfx: TLS_PFX,
+        reason: TLS_PFX_PASSWORD ? 'файл не читается — вероятно, неверный TLS_PFX_PASSWORD' : 'файл не читается — вероятно, он защищён паролем, а TLS_PFX_PASSWORD не задан',
+        error: String(err && err.message || err),
+      });
+      throw err;
+    }
+    logServer('INFO', 'tls_enabled', { pfx: TLS_PFX });
+    return https.createServer(options, app);
   }
-  const options = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
-  // Считаем сертификаты в цепочке — если он один, промежуточных нет, и часть клиентов
-  // (в первую очередь автообновление) не сможет проверить сервер. Молча это пропускать нельзя.
-  const chainLength = (String(options.cert).match(/BEGIN CERTIFICATE/g) || []).length;
-  if (chainLength < 2) {
-    logServer('WARN', 'tls_chain_incomplete', {
-      certificates: chainLength,
-      hint: 'В TLS_CERT только сертификат сервера. Добавьте промежуточные УЦ: cat server.crt chain.crt > fullchain.crt',
-    });
+
+  if (TLS_CERT && TLS_KEY) {
+    const options = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
+    logServer('INFO', 'tls_enabled', { cert: TLS_CERT });
+    return https.createServer(options, app);
   }
-  logServer('INFO', 'tls_enabled', { cert: TLS_CERT, certificates: chainLength });
-  return https.createServer(options, app);
+
+  logServer('WARN', 'tls_disabled', { reason: 'TLS_PFX (или TLS_CERT+TLS_KEY) не задан — трафик идёт открытым текстом' });
+  return http.createServer(app);
+}
+
+// Что сервер РЕАЛЬНО отдаёт клиенту — не то же самое, что лежит в файле: из PFX содержимое цепочки
+// вообще не видно снаружи, а в PEM легко положить лишнее. Поэтому сразу после старта сервер один
+// раз подключается сам к себе и смотрит на предъявленную цепочку глазами клиента.
+//
+// Смысл проверки — в двух вещах, каждая из которых иначе всплывает сильно позже и не там, где
+// причина:
+//   * имя в SAN должно дословно совпадать с адресом в desktop-client/config.js, иначе клиент
+//     отвергнет соединение по несовпадению имени;
+//   * если цепочка обрывается на сертификате, который сам себя не подписывал, значит промежуточных
+//     УЦ в ней не хватает. Браузеры на доменных машинах иногда дотягивают недостающее сами, а Node
+//     (то есть автообновление клиента) — никогда: в браузере всё выглядит исправно, а обновления
+//     молча не идут.
+// Плюс в лог попадает дата окончания: автопродления нет, сертификат перевыпускают руками.
+function reportTlsCertificate() {
+  const socket = tls.connect({ host: '127.0.0.1', port: PORT, rejectUnauthorized: false }, () => {
+    try {
+      const chain = [];
+      let cert = socket.getPeerCertificate(true);
+      while (cert && cert.fingerprint256 && !chain.some((c) => c.fingerprint256 === cert.fingerprint256)) {
+        chain.push(cert);
+        cert = cert.issuerCertificate;
+      }
+      const leaf = chain[0] || {};
+      const last = chain[chain.length - 1] || {};
+      const selfSigned = last.subject && last.issuer && JSON.stringify(last.subject) === JSON.stringify(last.issuer);
+      const validTo = leaf.valid_to ? new Date(leaf.valid_to) : null;
+      logServer('INFO', 'tls_certificate', {
+        subject: (leaf.subject && leaf.subject.CN) || null,
+        san: leaf.subjectaltname || null,
+        issuer: (leaf.issuer && leaf.issuer.CN) || null,
+        valid_to: leaf.valid_to || null,
+        days_left: validTo ? Math.round((validTo - Date.now()) / 86400000) : null,
+        certificates: chain.length,
+      });
+      if (!selfSigned) {
+        logServer('WARN', 'tls_chain_incomplete', {
+          certificates: chain.length,
+          hint: 'Сервер не отдаёт полную цепочку до корневого УЦ. Для PFX — экспортируйте его вместе со всеми сертификатами пути; для PEM — cat server.crt chain.crt > fullchain.crt',
+        });
+      }
+    } catch (err) {
+      logServer('WARN', 'tls_check_failed', { error: String(err && err.message || err) });
+    }
+    socket.destroy();
+  });
+  socket.on('error', (err) => {
+    logServer('WARN', 'tls_check_failed', { error: String(err && err.message || err) });
+  });
 }
 
 // ---------- WebSocket (реалтайм + presence) ----------
@@ -1765,5 +1838,7 @@ app.use((err, req, res, next) => {
 
 server.listen(PORT, () => {
   ensureBootstrapAdmin();
-  console.log(`Мини-мессенджер запущен: http://localhost:${PORT}`);
+  const scheme = server instanceof https.Server ? 'https' : 'http';
+  console.log(`Искра запущена: ${scheme}://localhost:${PORT}`);
+  if (scheme === 'https') reportTlsCertificate();
 });
