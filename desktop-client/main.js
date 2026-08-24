@@ -757,6 +757,25 @@ ipcMain.handle('set-server-url', (event, url) => {
   saveSettings();
   return settings.serverUrlOverride || SERVER_URL;
 });
+// Чем именно окна связаны с сервером — для индикатора шифрования в ростере. Отдельный канал, а не
+// расширение get-server-url: тот возвращает голую строку и используется во всех трёх окнах при
+// подключении, а это нужно одному ростеру и раз в сеанс.
+ipcMain.handle('get-connection-info', () => ({
+  url: settings.serverUrlOverride || SERVER_URL,
+  builtIn: SERVER_URL,                              // что зашито в config.js при сборке
+  fromOverride: Boolean(settings.serverUrlOverride), // адрес переопределён на этой машине
+}));
+
+// Перезапуск приложения после смены адреса сервера. Можно было бы переподключать окна на лету, но
+// адрес читают все три окна независимо, каждое в своём рендерере и в свой момент — половина
+// состояния осталась бы от старого адреса. Смена адреса — операция редкая и служебная, честный
+// перезапуск здесь надёжнее любой ловкости.
+ipcMain.on('relaunch', () => {
+  app.relaunch();
+  isQuitting = true; // иначе обработчик close у ростера свернёт окно в трей вместо выхода
+  app.quit();
+});
+
 // Строка "что именно у меня установлено" для панели настроек — см. BUILD_TRACK выше.
 ipcMain.handle('get-app-info', () => ({
   version: app.getVersion(),

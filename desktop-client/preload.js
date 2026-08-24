@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('desktop', {
   onToast: (cb) => ipcRenderer.on('toast', (event, payload) => cb(payload)),
   pickDownloadFolder: () => ipcRenderer.invoke('pick-download-folder'),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  // Индикатор шифрования и служебное окно смены адреса в ростере (Ctrl+Shift+S).
+  getConnectionInfo: () => ipcRenderer.invoke('get-connection-info'),
+  relaunch: () => ipcRenderer.send('relaunch'),
   // Обновление приложения — см. setupUpdater в main.js.
   getUpdateState: () => ipcRenderer.invoke('get-update-state'),
   onUpdateState: (cb) => ipcRenderer.on('update-state', (event, state) => cb(state)),
