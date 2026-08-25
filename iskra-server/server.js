@@ -1468,6 +1468,7 @@ app.get('/api/admin/tls', auth, requireCapability('can_admin'), async (req, res)
   res.json({
     enabled: server instanceof https.Server,
     source: tlsSource,                              // store | env-pfx | env-pem | null
+    envAlsoSet: tlsSource === 'store' ? envTlsSource() : null, // "двойная настройка", см. envTlsSource
     storeHasCertificate: inStore,
     restartRequired: inStore && tlsSource !== 'store',
     requestSecure: Boolean(req.secure),             // сама панель сейчас открыта по https или нет
@@ -1742,6 +1743,15 @@ function resolveTlsOptions() {
 
 let tlsSource = null; // что реально сейчас используется — показывается в панели
 
+// Задан ли сертификат ещё и переменными окружения. Нужно, чтобы предупредить о "двойной настройке":
+// пока файл лежит в хранилище, действует он, а переменная стоит в тени и ничем себя не проявляет —
+// ровно до того дня, когда файл из хранилища удалят и обнаружат, что сервер всё так же на https.
+function envTlsSource() {
+  if (TLS_PFX) return 'env-pfx';
+  if (TLS_CERT && TLS_KEY) return 'env-pem';
+  return null;
+}
+
 function createAppServer() {
   let resolved;
   try {
@@ -1771,6 +1781,12 @@ function createAppServer() {
   }
   tlsSource = resolved.source;
   logServer('INFO', 'tls_enabled', { source: resolved.source, where: resolved.where });
+  if (resolved.source === 'store' && envTlsSource()) {
+    logServer('WARN', 'tls_shadow_config', {
+      shadowed: envTlsSource(),
+      hint: 'Сертификат задан и в хранилище certs/, и переменными окружения. Действует хранилище; переменная вступит в силу, только если файл из хранилища удалить. Уберите её из скрипта запуска, чтобы управление было в одном месте',
+    });
+  }
   return https.createServer(resolved.options, app);
 }
 
