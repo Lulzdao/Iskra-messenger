@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('desktop', {
   openChat: (payload) => ipcRenderer.send('open-chat', payload),
   openBroadcast: (payload) => ipcRenderer.send('open-broadcast', payload),
   showUserMenu: (payload) => ipcRenderer.send('show-user-menu', payload),
+  // ПКМ по отделу в списке контактов — «Сообщение всему отделу».
+  showDepartmentMenu: (payload) => ipcRenderer.send('show-department-menu', payload),
   showMessageMenu: (payload) => ipcRenderer.send('show-message-menu', payload),
   windowAction: (action) => ipcRenderer.send('window-action', action),
   notify: (payload) => ipcRenderer.send('notify', payload),

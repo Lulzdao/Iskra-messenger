@@ -6,7 +6,7 @@
 
 Состоит из двух частей:
 
-- **[`mini-messenger/`](mini-messenger/README.md)** — сервер (Node.js + WebSocket + SQLite) и
+- **[`iskra-server/`](iskra-server/README.md)** — сервер (Node.js + WebSocket + SQLite) и
   веб-панель администратора: сотрудники, отделы, права, переписки, файлы, логи.
 - **[`desktop-client/`](desktop-client/README-desktop-client.md)** — приложение для сотрудников
   (Electron), собирается в `.exe`-установщик.
@@ -20,7 +20,7 @@
 Сервер работает на Windows Server 2016 с Node.js 22 (на Linux — тоже, разницы в коде нет):
 
 ```bat
-cd mini-messenger
+cd iskra-server
 npm install
 copy bootstrap-admin.example.js bootstrap-admin.js   :: логин и пароль первого администратора
 npm start
@@ -39,9 +39,9 @@ npm start
 сертификат — иначе пароли, переписка и файлы идут открытым текстом. Сертификат берётся у
 удостоверяющего центра вашего домена и загружается как есть, `.pfx`-файлом, прямо в панели
 администратора (раздел «Сертификат») — конвертировать ничего не нужно. Там же он потом и меняется:
-подробности в [README сервера](mini-messenger/README.md).
+подробности в [README сервера](iskra-server/README.md).
 
 Включено ли шифрование, видно и в самом клиенте: на экране входа и рядом с именем сотрудника.
 
-Вся переписка организации лежит в одном файле `mini-messenger/messenger.db` — настройте его
+Вся переписка организации лежит в одном файле `iskra-server/messenger.db` — настройте его
 резервное копирование.

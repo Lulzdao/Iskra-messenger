@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Мини-мессенджер — панель администратора</title>
+<title>Искра — панель администратора</title>
 <style>
   :root {
     --bg:#14161a; --panel:#1c1f26; --panel-2:#242832; --border:#2c313c;
@@ -75,6 +75,17 @@
   .bc-item .time { color:var(--muted); font-size:10.5px; margin-left:6px; }
   .bc-item .txt { margin-top:4px; white-space:pre-wrap; line-height:1.4; }
   textarea#bcText { width:100%; height:80px; resize:vertical; }
+
+  /* Выбор отделов сотрудника. Сотрудник может состоять сразу в нескольких, а <select multiple> с
+     ctrl-кликом в таблице — ровно тот элемент, который administrator без подсказки не осилит.
+     Поэтому кнопка со списком отделов и всплывающий список галочек. */
+  .dept-btn { background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:7px; padding:7px 10px; font-size:12.5px; cursor:pointer; text-align:left; min-width:150px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dept-btn:hover { border-color:var(--accent); }
+  .dept-btn.empty { color:var(--muted); }
+  #deptPicker { position:fixed; z-index:50; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; min-width:200px; max-height:280px; overflow-y:auto; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+  #deptPicker label { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:7px; cursor:pointer; font-size:13px; }
+  #deptPicker label:hover { background:var(--panel-2); }
+  #deptPicker .empty { color:var(--muted); font-size:12.5px; padding:6px 8px; }
 </style>
 </head>
 <body>
@@ -82,7 +93,7 @@
 <div id="authScreen">
   <div id="authBox">
     <h1>Панель администратора</h1>
-    <p class="sub">Мини-мессенджер — управление организацией</p>
+    <p class="sub">Искра — управление организацией</p>
     <div id="authErr"></div>
     <form id="authForm" onsubmit="event.preventDefault(); doLogin();">
       <input id="username" placeholder="Логин">
@@ -94,7 +105,7 @@
 
 <div id="dash">
   <div id="sidebar">
-    <div class="brand"><span class="dot"></span>Мессенджер</div>
+    <div class="brand"><span class="dot"></span>Искра</div>
     <div class="nav-item active" data-view="overview">Обзор</div>
     <div class="nav-item" data-view="users">Пользователи</div>
     <div class="nav-item" data-view="history">Переписки</div>
@@ -163,7 +174,7 @@
         <div class="row-flex">
           <input id="newUsername" placeholder="Логин">
           <input id="newPassword" placeholder="Пароль">
-          <select id="newDept"><option value="">Без отдела</option></select>
+          <button type="button" class="dept-btn empty" id="newDept" onclick="pickNewUserDepartments(this)">Без отдела</button>
           <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserBroadcast"> Рассылки</label>
           <label class="row-flex" style="gap:4px; font-size:12.5px;"><input type="checkbox" id="newUserAdmin"> Админка</label>
           <button class="action" onclick="createUser()">Создать</button>
@@ -172,7 +183,7 @@
       <div class="panel">
         <input id="userSearch" placeholder="Поиск по логину или имени..." style="width:100%; margin-bottom:12px;" oninput="renderUsers()">
         <table>
-          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отдел</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
+          <thead><tr><th>Логин</th><th>Отображаемое имя</th><th>Отделы</th><th>Рассылки</th><th>Админка</th><th>Сброс пароля</th><th></th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </div>
@@ -445,7 +456,8 @@ function renderUsers() {
   if (!filtered.length) { body.innerHTML = '<tr><td colspan="7" style="color:var(--muted); text-align:center;">Никого не найдено</td></tr>'; return; }
   filtered.forEach(u => {
     const tr = document.createElement('tr');
-    const deptSelect = `<select onchange="changeDept(${u.id}, this.value)"><option value="">Без отдела</option>${deptsCache.map(d => `<option value="${d.id}" ${u.department_id === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}</select>`;
+    const deptNames = (u.departments || []).map(d => d.name).join(', ');
+    const deptSelect = `<button type="button" class="dept-btn${deptNames ? '' : ' empty'}" title="${escapeHtml(deptNames || 'Без отдела')}" onclick="pickUserDepartments(${u.id}, this)">${escapeHtml(deptNames || 'Без отдела')}</button>`;
     tr.innerHTML = `<td>${escapeHtml(u.username)}</td>
       <td><div class="row-flex"><input type="text" value="${escapeHtml(u.display_name)}" id="dn-${u.id}" style="width:130px"><button class="action ghost" onclick="renameUser(${u.id})">✓</button></div></td>
       <td>${deptSelect}</td>
@@ -484,7 +496,7 @@ function renderDepts() {
       </td>`;
     body.appendChild(tr);
   });
-  document.getElementById('newDept').innerHTML = '<option value="">Без отдела</option>' + deptsCache.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+  renderNewUserDepartments(); // кнопка выбора отделов у формы "новый пользователь" — см. ниже
 }
 // Текущее имя берём из кэша по id, а не подставляем строкой в сам onclick: подстановка ломалась
 // на любой кавычке в названии отдела (и открывала бы вставку разметки, если бы имя туда попало).
@@ -532,20 +544,94 @@ async function refreshAll() {
 async function createUser() {
   const username = document.getElementById('newUsername').value.trim();
   const password = document.getElementById('newPassword').value;
-  const department_id = document.getElementById('newDept').value || null;
+  const department_ids = [...newUserDepartments];
   const can_broadcast = document.getElementById('newUserBroadcast').checked;
   const can_admin = document.getElementById('newUserAdmin').checked;
   if (!username || !password) return alert('Укажите логин и пароль');
   try {
-    await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_id, can_broadcast, can_admin }) });
+    await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ username, password, department_ids, can_broadcast, can_admin }) });
     document.getElementById('newUsername').value = '';
     document.getElementById('newPassword').value = '';
+    newUserDepartments = [];
+    renderNewUserDepartments();
     document.getElementById('newUserBroadcast').checked = false;
     document.getElementById('newUserAdmin').checked = false;
     refreshAll();
   } catch (e) { alert(e.message); }
 }
-async function changeDept(id, department_id) { try { const r = await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_id: department_id || null, version: userVersion(id) }) }); applyUserVersion(id, r.version); } catch (e) { alert(e.message); refreshAll(); } }
+// ---------- Выбор отделов ----------
+// Один всплывающий список на всю страницу, а не свой у каждой строки: строк может быть двести.
+let newUserDepartments = []; // отделы, выбранные в форме "новый пользователь", до её отправки
+
+function closeDeptPicker() {
+  const el = document.getElementById('deptPicker');
+  if (el) el.remove();
+}
+document.addEventListener('mousedown', (e) => {
+  const picker = document.getElementById('deptPicker');
+  if (picker && !picker.contains(e.target) && !e.target.classList.contains('dept-btn')) closeDeptPicker();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDeptPicker(); });
+
+function openDeptPicker(anchor, selectedIds, onToggle) {
+  closeDeptPicker();
+  const picker = document.createElement('div');
+  picker.id = 'deptPicker';
+  if (!deptsCache.length) {
+    picker.innerHTML = '<div class="empty">Отделов пока нет — создайте их выше</div>';
+  } else {
+    picker.innerHTML = deptsCache.map(d =>
+      `<label><input type="checkbox" value="${d.id}" ${selectedIds.includes(d.id) ? 'checked' : ''}>${escapeHtml(d.name)}</label>`
+    ).join('');
+  }
+  document.body.appendChild(picker);
+  const rect = anchor.getBoundingClientRect();
+  // Ниже кнопки, а если там не помещается (нижние строки длинной таблицы) — выше неё.
+  const height = picker.offsetHeight;
+  picker.style.left = Math.min(rect.left, window.innerWidth - picker.offsetWidth - 8) + 'px';
+  picker.style.top = (rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - height - 4)) + 'px';
+  picker.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.onchange = () => {
+      const ids = [...picker.querySelectorAll('input[type=checkbox]')].filter(x => x.checked).map(x => Number(x.value));
+      onToggle(ids);
+    };
+  });
+}
+
+function pickUserDepartments(id, anchor) {
+  const user = usersCache.find(u => u.id === id);
+  if (!user) return;
+  openDeptPicker(anchor, (user.departments || []).map(d => d.id), async (ids) => {
+    try {
+      const r = await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ department_ids: ids, version: userVersion(id) }) });
+      applyUserVersion(id, r.version);
+      // Обновляем кэш и кнопку на месте: перерисовка всей таблицы закрыла бы список галочек,
+      // а отделов обычно отмечают сразу несколько.
+      user.departments = ids.map(i => deptsCache.find(d => d.id === i)).filter(Boolean).map(d => ({ id: d.id, name: d.name }));
+      const names = user.departments.map(d => d.name).join(', ');
+      anchor.textContent = names || 'Без отдела';
+      anchor.title = names || 'Без отдела';
+      anchor.classList.toggle('empty', !names);
+    } catch (e) { alert(e.message); refreshAll(); }
+  });
+}
+
+function renderNewUserDepartments() {
+  const btn = document.getElementById('newDept');
+  if (!btn) return;
+  newUserDepartments = newUserDepartments.filter(id => deptsCache.some(d => d.id === id)); // отдел могли удалить
+  const names = newUserDepartments.map(id => deptsCache.find(d => d.id === id)?.name).filter(Boolean).join(', ');
+  btn.textContent = names || 'Без отдела';
+  btn.title = names || 'Без отдела';
+  btn.classList.toggle('empty', !names);
+}
+
+function pickNewUserDepartments(anchor) {
+  openDeptPicker(anchor, newUserDepartments, (ids) => {
+    newUserDepartments = ids;
+    renderNewUserDepartments();
+  });
+}
 async function resetPassword(id) {
   const val = document.getElementById(`pw-${id}`).value;
   if (!val) return;
@@ -919,10 +1005,13 @@ async function requestClientLog(userId, host) {
 }
 
 async function loadBroadcastFeed() {
-  const items = await api('/api/broadcasts');
+  // all=1 — панель показывает и объявления всей организации, и сообщения отдельным отделам:
+  // сотрудник видит только свои, администратор по своей задаче видит всё.
+  const items = await api('/api/broadcasts?all=1');
   document.getElementById('bcFeed').innerHTML = items.map(b => {
     const time = new Date(b.created_at).toLocaleString('ru-RU');
-    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span><div class="txt">${escapeHtml(b.text)}</div></div>`;
+    const dept = b.department ? `<span class="time">отдел: ${escapeHtml(b.department)}</span>` : '';
+    return `<div class="bc-item"><span class="who">${escapeHtml(b.from_user)}</span><span class="time">${time}</span>${dept}<div class="txt">${escapeHtml(b.text)}</div></div>`;
   }).join('') || '<div style="color:var(--muted)">Рассылок пока не было</div>';
 }
 async function sendBroadcast() {
@@ -957,7 +1046,7 @@ async function startDash() {
   document.getElementById('dash').classList.add('active');
   document.getElementById('whoName').textContent = me.display_name || me.username;
   await refreshAll();
-  document.getElementById('whoRole').textContent = me.department_id ? (deptsCache.find(d => d.id === me.department_id)?.name || '') : '';
+  document.getElementById('whoRole').textContent = (me.departments || []).map(d => d.name).join(', ');
   await loadHistory();
   await loadBroadcastFeed();
   await loadFiles();

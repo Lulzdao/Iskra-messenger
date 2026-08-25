@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Мессенджер</title>
+<title>Искра</title>
 <link rel="stylesheet" href="theme.css">
 <style>
   /* chat.html/broadcast.html задают это у себя, а здесь этого объявления не было — из-за чего body
@@ -235,7 +235,7 @@
 <body>
 
 <div class="wintitlebar">
-  <span class="title"><span class="brand-dot"></span>Мессенджер</span>
+  <span class="title"><span class="brand-dot"></span>Искра</span>
   <div class="wctl">
     <button class="icon-btn" id="wcMin"></button>
     <button class="icon-btn" id="wcMax"></button>
@@ -499,7 +499,9 @@ function connectWs() {
     }
     if (data.type === 'broadcast') {
       desktop.notify({
-        title: '📢 Рассылка от ' + data.from_user,
+        title: data.department
+          ? `📢 Отдел «${data.department}» — ${data.from_user}`
+          : '📢 Рассылка от ' + data.from_user,
         body: data.text || `📎 ${(data.files || []).length} файл(ов)`,
         openPayload: { type: 'broadcast', id: 'broadcast', label: 'Объявления', token, serverUrl, file: 'broadcast.html' },
       });
@@ -873,7 +875,7 @@ function updatePresenceOnly() {
   });
   document.querySelectorAll('#list .section[data-dept]').forEach((section) => {
     const key = section.dataset.dept;
-    const users = usersCache.filter((u) => (u.department || 'Без отдела') === key);
+    const users = usersCache.filter((u) => departmentKeysOf(u).includes(key));
     const countEl = section.querySelector('.scount');
     if (countEl) countEl.textContent = deptOnlineCount(users);
   });
@@ -1024,11 +1026,15 @@ function renderList() {
     return;
   }
 
+  // Сотрудник может состоять в нескольких отделах — тогда он показывается в каждом из них.
+  // Это осознанное дублирование строки, а не ошибка: человек, который работает и на бухгалтерию,
+  // и на статистику, должен находиться там, где его ищут.
   const groups = new Map();
   allUsers.forEach(u => {
-    const key = u.department || 'Без отдела';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(u);
+    for (const key of departmentKeysOf(u)) {
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(u);
+    }
   });
 
   // Порядок — как задан на сервере (веб-панель, стрелки ↑↓), "Без отдела" всегда в самом низу;
@@ -1051,8 +1057,18 @@ function renderList() {
     section.className = 'section' + (collapsed ? ' collapsed' : '');
     section.dataset.dept = key;
     section.title = collapsed ? 'Показать сотрудников отдела' : 'Скрыть сотрудников отдела';
-    section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${key}</span><span class="scount">${deptOnlineCount(users)}</span>`;
+    section.innerHTML = `<span class="chev">${uiIcon('chevron')}</span><span class="stitle">${escapeHtml(key)}</span><span class="scount">${deptOnlineCount(users)}</span>`;
     section.onclick = () => toggleDept(key, section);
+    // ПКМ по отделу — «Сообщение всему отделу». У псевдо-отдела "Без отдела" адресатов нет как
+    // группы, поэтому меню там не появляется вовсе, а не появляется неработающим.
+    const dept = deptsCache.find((d) => d.name === key);
+    if (dept) {
+      section.oncontextmenu = (e) => {
+        e.preventDefault();
+        desktop.showDepartmentMenu({ departmentId: dept.id, departmentName: dept.name, token, serverUrl, me: JSON.stringify(me) });
+      };
+      section.title += ' · ПКМ — написать всему отделу';
+    }
     list.appendChild(section);
 
     const rowsWrap = document.createElement('div');
@@ -1064,6 +1080,16 @@ function renderList() {
 }
 
 let deptOrderCache = []; // имена отделов в порядке, заданном на сервере (стрелками ↑↓ в веб-панели)
+let deptsCache = [];     // они же целиком — id нужен для "Сообщение всему отделу" (ПКМ по отделу)
+
+// Отделы сотрудника: массив имён, пусто — "Без отдела". Сервер отдаёт departments массивом; поле
+// department (первый отдел строкой) он присылает для совместимости, и если клиент окажется новее
+// сервера, работать будем по нему.
+function departmentKeysOf(u) {
+  const names = Array.isArray(u.departments) ? u.departments.map((d) => d.name).filter(Boolean) : [];
+  if (names.length) return names;
+  return [u.department || 'Без отдела'];
+}
 
 // Раз в 20 секунд (см. setInterval ниже) плюс по каждому 'users-changed' от WS — при росте штата
 // гонять список целиком на каждый пустой тик расточительно. Сервер отдаёт ETag на основе версии
@@ -1089,7 +1115,8 @@ async function refreshUsers() {
     const dres = await fetch(serverUrl + '/api/departments', { headers: dHeaders });
     if (dres.ok && dres.status !== 304) {
       deptsEtag = dres.headers.get('ETag');
-      deptOrderCache = (await dres.json()).map((d) => d.name);
+      deptsCache = await dres.json();
+      deptOrderCache = deptsCache.map((d) => d.name);
       changed = true;
     }
   } catch { /* не критично — останется прошлый порядок или алфавитный */ }

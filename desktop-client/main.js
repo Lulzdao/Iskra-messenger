@@ -116,7 +116,24 @@ const DEFAULT_SETTINGS = {
   lastSeenVersion: null,     // версия на предыдущем запуске — чтобы показать "обновлено до X" один раз после установки
 };
 
+// Приложение раньше называлось mini-messenger-desktop, и папка с настройками была своя на это имя.
+// После переименования в «Искру» Electron стал класть данные в другую папку — переносим настройки
+// один раз, чтобы у людей не сбросился, в частности, адрес сервера, заданный вручную по Ctrl+S.
+// Токен входа сюда не попадает (он в localStorage окна, а его так просто не перенести) — один раз
+// придётся войти заново, это ожидаемо и происходит однократно.
+const LEGACY_APP_DIR = 'mini-messenger-desktop';
+function migrateLegacySettings() {
+  if (fs.existsSync(SETTINGS_PATH)) return;
+  const legacy = path.join(app.getPath('appData'), LEGACY_APP_DIR, 'settings.json');
+  try {
+    if (!fs.existsSync(legacy)) return;
+    fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
+    fs.copyFileSync(legacy, SETTINGS_PATH);
+  } catch { /* не перенеслось — приложение просто запустится с настройками по умолчанию */ }
+}
+
 function loadSettings() {
+  migrateLegacySettings();
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) }; }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
@@ -412,7 +429,7 @@ function createTray() {
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
   tray = new Tray(icon);
-  tray.setToolTip('Мини-мессенджер');
+  tray.setToolTip('Искра');
   const menu = Menu.buildFromTemplate([
     { label: 'Открыть', click: () => { rosterWin.show(); rosterWin.focus(); } },
     { type: 'separator' },
@@ -670,6 +687,20 @@ ipcMain.on('open-chat', (event, payload) => {
 
 ipcMain.on('open-broadcast', (event, payload) => {
   createWindow('broadcast', 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 });
+});
+
+// ПКМ по отделу в списке контактов. Окно то же самое, что у объявлений (broadcast.html) — оно уже
+// умеет файлы, перетаскивание и поиск по дням; отличается только круг адресатов, см. departmentId.
+// Ключ окна свой на каждый отдел, чтобы окна разных отделов и общие объявления не подменяли друг друга.
+ipcMain.on('show-department-menu', (event, payload) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const menu = Menu.buildFromTemplate([
+    {
+      label: `Сообщение всему отделу «${payload.departmentName}»`,
+      click: () => createWindow(`broadcast:dept:${payload.departmentId}`, 'broadcast.html', payload, { width: 420, height: 520, minWidth: 360, minHeight: 400 }),
+    },
+  ]);
+  menu.popup({ window: win });
 });
 
 ipcMain.on('show-user-menu', (event, payload) => {
