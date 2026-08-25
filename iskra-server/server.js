@@ -817,6 +817,12 @@ app.post('/api/register', ipRateLimit({ windowMs: 60 * 60 * 1000, max: 10 }), (r
   }
 });
 
+// Проверка "тот ли это адрес и отвечает ли сервер" — без входа, до всякого пароля. Нужна клиенту:
+// служебное окно смены адреса (Ctrl+Shift+S в настройках) даёт нажать "Проверить" ДО сохранения,
+// вместо того чтобы перезапускаться вслепую и выяснять это уже без связи. Ничего не раскрывает:
+// по этому же адресу и так отдаётся страница входа в панель.
+app.get('/api/ping', (req, res) => res.json({ ok: true, app: 'iskra', secure: Boolean(req.secure) }));
+
 app.post('/api/login', ipRateLimit({ windowMs: 10 * 60 * 1000, max: 30 }), (req, res) => {
   const { username, password } = req.body || {};
   const lockedSec = checkLoginLock(username);
@@ -1578,8 +1584,12 @@ app.delete('/api/admin/tls', auth, requireCapability('can_admin'), (req, res) =>
   } catch (err) {
     return res.status(500).json({ error: 'Не удалось удалить файл: ' + String((err && err.message) || err) });
   }
-  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id });
-  res.json({ ok: true });
+  // Удаление из хранилища НЕ означает "теперь без шифрования": если сертификат задан ещё и
+  // переменной окружения, после перезапуска сервер возьмёт его оттуда — и со стороны это выглядит
+  // так, будто удаление не сработало. Поэтому сразу считаем и возвращаем, что реально будет дальше.
+  const next = resolveTlsOptions();
+  logServer('WARN', 'tls_certificate_removed', { adminId: req.user.id, next_source: next ? next.source : null });
+  res.json({ ok: true, nextSource: next ? next.source : null, nextWhere: next ? next.where : null });
 });
 
 // PFX больше стандартного лимита express.json() — ответ должен остаться JSON, иначе панель
