@@ -867,8 +867,13 @@ app.post('/api/client-log', auth, (req, res) => {
     }
     return res.json({ ok: true });
   }
-  const { kind, message, extra, source, hostname } = req.body || {};
+  const { kind, message, extra, source, hostname, level } = req.body || {};
   logClient({
+    // Клиент сам говорит, насколько это серьёзно. Раньше всё присланное считалось ошибкой, и
+    // «на сервере ещё нет файлов обновления» — обычное состояние до первого выпуска — попадало в
+    // журнал красным с каждой машины при каждом запуске. Чужому значению не доверяем: всё, кроме
+    // явных WARN/INFO, остаётся ERROR.
+    level: ['WARN', 'INFO'].includes(level) ? level : 'ERROR',
     userId: req.user.id,
     username: req.user.username,
     hostname: String(hostname || '?').slice(0, 100),
@@ -1633,9 +1638,9 @@ function parseLogLine(line, source) {
   if (!m) return null;
   let meta = {};
   try { meta = JSON.parse(m[1]); } catch { /* строка повреждена — оставляем meta пустым */ }
-  // Клиентские записи всегда об ошибке (см. installErrorReporting в ui-kit.js — шлёт только сбои),
-  // отдельного уровня в самой строке нет, поэтому фиксируем ERROR для единообразия с серверными.
-  return { ts, level: 'ERROR', source: 'client', event: meta.kind || 'client_error', meta };
+  // Уровень присылает сам клиент (см. logLocal в main.js). У записей, сделанных прежними сборками,
+  // его нет — там по-прежнему ERROR, как и раньше.
+  return { ts, level: meta.level || 'ERROR', source: 'client', event: meta.kind || 'client_error', meta };
 }
 // Логи читаются прямо из дневных файлов (см. logsDir выше), без отдельной БД-таблицы под них —
 // для 20-200 человек файл за день весит от силы сотни КБ, гонять его целиком в память при каждом

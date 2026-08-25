@@ -583,13 +583,13 @@ desktop.getAppInfo().then(({ version, track, electron }) => {
 // Главный процесс пишет свои события (сбои обновления, падения окон) в локальный файл и присылает
 // их сюда — потому что обратиться к серверу может только это окно, токен есть лишь у него.
 // Без этого такие события оставались бы на машине сотрудника и до раздела "Логи" не доходили.
-desktop.onReportToServer(({ kind, meta }) => {
+desktop.onReportToServer(({ kind, meta, level }) => {
   if (!token || !serverUrl) return; // ещё не вошли — отправлять нечем и некуда
   fetch(`${serverUrl}/api/client-log`, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      kind, source: 'main', hostname: desktop.hostname,
+      kind, level, source: 'main', hostname: desktop.hostname,
       message: (meta && (meta.message || meta.reason)) || kind,
       extra: meta,
     }),
