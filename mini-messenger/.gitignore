@@ -1,9 +1,0 @@
-node_modules/
-messenger.db
-messenger.db-shm
-messenger.db-wal
-uploads/
-logs/
-updates/
-bootstrap-admin.js
-.env
