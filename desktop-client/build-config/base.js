@@ -51,7 +51,8 @@ module.exports = {
     'preload.js',
     'config.js',
     'renderer/**/*',
-    'tray-icon.png',
+    'tray-icon.ico',
+    'tray-icon-fallback.png', // запасной вариант, если .ico не декодируется — см. createTray в main.js
     'build/icon.ico',
     // Корневой сертификат домена — нужен главному процессу, чтобы Node доверял серверу по https
     // (см. trustOrganizationCa в main.js). Публичный файл, секрета не содержит.

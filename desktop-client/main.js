@@ -421,11 +421,17 @@ function createRoster() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'tray-icon.png');
-  const icon = nativeImage.createFromPath(iconPath);
+  const iconPath = path.join(__dirname, 'tray-icon.ico');
+  let icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
-    // Если видите это в консоли после сборки .exe — значит tray-icon.png не попал в установщик:
-    // проверьте, что он указан в поле "files" секции "build" в package.json
+    // .ico декодируется через нативный декодер ОС — на Windows это штатно, но проверено вживую:
+    // на Linux (например, при разработке не с Windows) nativeImage отдаёт пустое изображение молча,
+    // без исключения. Без отдельного PNG трей остался бы совсем без иконки, а не с чуть похуже.
+    icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon-fallback.png'));
+  }
+  if (icon.isEmpty()) {
+    // Если видите это в консоли после сборки .exe — значит ни tray-icon.ico, ни tray-icon-fallback.png
+    // не попали в установщик: проверьте поле "files" секции "build" в package.json
     console.warn('Иконка трея не найдена или пуста:', iconPath);
   }
   tray = new Tray(icon);
